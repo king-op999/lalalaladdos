@@ -1,10 +1,7 @@
 services:
   - type: web
-    name: ultra-funk-bronx-ddos
+    name: shock5-proxy-ddos
     runtime: python
     buildCommand: pip install -r requirements.txt
-    startCommand: gunicorn app:app --workers 4 --worker-class sync --bind 0.0.0.0:$PORT --timeout 120
-    envVars:
-      - key: PYTHON_VERSION
-        value: 3.11.0
+    startCommand: gunicorn app:app --workers 4 --bind 0.0.0.0:$PORT --timeout 120
     plan: free
